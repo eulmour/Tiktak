@@ -7,6 +7,7 @@
 
 #define IDT_TIMER (WM_USER + 0x0001)
 #define UM_RESET (WM_USER + 0x0002)
+#define IDM_ABOUTBOX (WM_USER + 0x0003)
 
 #define TOI(chr) (chr - 48)
 #define TOC(i) (i + 48)
@@ -35,7 +36,7 @@ int APIENTRY WinMain(_In_ HINSTANCE hInstance,
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
-    CreateDialogParam(hInstance, MAKEINTRESOURCE(IDD_TIKTAK), NULL, DialogProc, 0);
+    DialogBox(hInstance, MAKEINTRESOURCE(IDD_TIKTAK), NULL, DialogProc);
 
     HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_TIKTAK));
 
@@ -67,7 +68,7 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
         static const int points_per_inch = 72;
         int pixels_per_inch = GetDeviceCaps(hDC, LOGPIXELSY);
-        int pixels_height = -(30 * pixels_per_inch / points_per_inch);
+        int pixels_height = -(32 * pixels_per_inch / points_per_inch);
 
         HFONT font = CreateFontA(pixels_height, 0, 0, 0, 0,
             FALSE, FALSE, FALSE,
@@ -83,16 +84,16 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
         /* updating window */
         SetWindowText(hEditTime, TEXT("00:05"));
 
-        ShowWindow(hDlg, SW_NORMAL);
-        UpdateWindow(hDlg);
-
         break;
     }
 
     case WM_COMMAND:
 
-        if (LOWORD(wParam) == IDOK)
+        switch (LOWORD(wParam))
         {
+
+        case IDOK:
+
             if (bStarted == FALSE)
             {
                 GetWindowTextA(hEditTime, &timeBuffer, 6);
@@ -126,14 +127,18 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
             {
                 SendMessage(hDlg, UM_RESET, NULL, NULL);
             }
+
+            break;
+
+        case IDM_ABOUTBOX:
+            DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hDlg, About);
+            break;
         }
 
-        if (LOWORD(wParam) == IDCANCEL)
-        {
-            EndDialog(hDlg, LOWORD(wParam));
-            DestroyWindow(hDlg);
-        }
+        break;
 
+    case IDM_ABOUTBOX:
+        DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hDlg, About);
         break;
 
     case WM_TIMER:
@@ -184,14 +189,37 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
         ShowWindow(hDlg, SW_MINIMIZE);
         break;
 
+    case WM_RBUTTONDOWN:
+    {
+        HMENU hPopupMenu = CreatePopupMenu();
+        InsertMenu(hPopupMenu, 0, MF_BYPOSITION | MF_STRING, IDM_ABOUTBOX, TEXT("About"));
+        InsertMenu(hPopupMenu, 1, MF_SEPARATOR, 0, NULL);
+        InsertMenu(hPopupMenu, 2, MF_BYPOSITION | MF_STRING, WM_DESTROY, TEXT("Exit"));
+
+        POINT point;
+        point.x = LOWORD(lParam);
+        point.y = HIWORD(lParam);
+        ClientToScreen(hDlg, &point);
+
+        //GetCursorPos(&point);
+
+
+
+        SetForegroundWindow(hDlg);
+        TrackPopupMenu(hPopupMenu, TPM_BOTTOMALIGN | TPM_LEFTALIGN, point.x, point.y, 0, hDlg, NULL);
+
+        //DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hDlg, About);
+    }
+        break;
+
     case WM_CLOSE:
+        EndDialog(hDlg, LOWORD(wParam));
         DestroyWindow(hDlg);
         break;
 
     case WM_DESTROY:
         SendMessage(hDlg, UM_RESET, NULL, NULL);
         PostQuitMessage(0);
-        //ExitProcess(0);
         break;
 
     case UM_RESET:
@@ -233,8 +261,6 @@ INT_PTR CALLBACK About(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam)
         if (LOWORD(wParam) == IDOK || LOWORD(wParam) == IDCANCEL)
         {
             EndDialog(hDlg, LOWORD(wParam));
-            PostQuitMessage(0);
-            ExitProcess(0);
             return (INT_PTR)TRUE;
         }
         break;
