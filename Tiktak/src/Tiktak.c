@@ -5,38 +5,46 @@
 #include "framework.h"
 #include "Tiktak.h"
 
+// resourse and message ids
 #define IDT_TIMER (WM_USER + 0x0001)
 #define UM_RESET (WM_USER + 0x0002)
 #define IDM_ABOUTBOX (WM_USER + 0x0003)
 
+// utility
 #define TOI(chr) (chr - 48)
 #define TOC(i) (i + 48)
 #define NULL_TIMER(bf) (bf[0] == 48 && bf[1] == 48 && bf[3] == 48 && bf[4] == 48)
 
-// Global Variables:
-HINSTANCE hInst;                                // current instance
-HWND hEditTime;
-CHAR timeBuffer[6];
-BOOL bStarted = FALSE;
-BOOL bReset = FALSE;
-BYTE hours;
-BYTE minutes_left;
-UINT minutes = 0;
-//UINT seconds;
-ITaskbarList3* pTaskBar;
+// props
+#define EDIT_TIME_LENGTH_MAX 8
+
+struct App {
+
+	HINSTANCE hInst;
+	HWND hEditTime;
+	ITaskbarList3* pTaskBar;
+
+	BOOL bStarted;
+	BOOL bReset;
+	BYTE hours;
+	BYTE minutes_left;
+	UINT minutes;
+	TCHAR timeBuffer[EDIT_TIME_LENGTH_MAX];
+};
 
 INT_PTR CALLBACK    DialogProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 
 int APIENTRY WinMain(_In_ HINSTANCE hInstance,
                      _In_opt_ HINSTANCE hPrevInstance,
-                     _In_ LPSTR    lpCmdLine,
+                     _In_ LPTSTR    lpCmdLine,
                      _In_ int       nCmdShow)
 {
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
 
-    DialogBox(hInstance, MAKEINTRESOURCE(IDD_TIKTAK), NULL, DialogProc);
+    struct App app = { .hInst = hInstance };
+    DialogBoxParam(hInstance, MAKEINTRESOURCE(IDD_TIKTAK), NULL, DialogProc, (LPARAM)&app);
 
     HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_TIKTAK));
 
@@ -57,11 +65,14 @@ int APIENTRY WinMain(_In_ HINSTANCE hInstance,
 
 INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
+    static struct App* app;
+
     switch (uMsg)
     {
     case WM_INITDIALOG:
     {
-        hEditTime = GetDlgItem(hDlg, IDC_EDIT_TIME);
+        app = (struct App*)lParam;
+        app->hEditTime = GetDlgItem(hDlg, IDC_EDIT_TIME);
 
         /* changing font */
         HDC hDC = CreateCompatibleDC(GetDC(HWND_DESKTOP));
@@ -79,10 +90,10 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
             VARIABLE_PITCH | FF_SWISS,
             "Segoe UI");
 
-        SendMessage(hEditTime, WM_SETFONT, (WPARAM)font, TRUE);
+        SendMessage(app->hEditTime, WM_SETFONT, (WPARAM)font, TRUE);
 
         /* updating window */
-        SetWindowText(hEditTime, TEXT("00:05"));
+        SetWindowText(app->hEditTime, TEXT("00:05"));
 
         break;
     }
@@ -94,77 +105,87 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
         case IDOK:
 
-            if (bStarted == FALSE)
+            if (app->bStarted == FALSE)
             {
-                GetWindowTextA(hEditTime, &timeBuffer, 6);
+                GetWindowTextA(app->hEditTime, app->timeBuffer, EDIT_TIME_LENGTH_MAX);
 
-                hours = TOI(timeBuffer[1]) + (TOI(timeBuffer[0]) * 10);
-                minutes = minutes_left = (hours * 60) + (TOI(timeBuffer[4]) + (TOI(timeBuffer[3]) * 10));
-                //seconds = (hours * 3600) + (minutes_left * 60);
+                if (app->timeBuffer[2] != ':') {
+                    MessageBox(hDlg, TEXT("Invalid format"), TEXT("Warning"), MB_ICONEXCLAMATION | MB_OK);
+					SendMessage(hDlg, UM_RESET, (WPARAM)NULL, (LPARAM)NULL);
+                    break;
+                }
+
+                app->hours = TOI(app->timeBuffer[1]) + (TOI(app->timeBuffer[0]) * 10);
+                app->minutes = app->minutes_left = (app->hours * 60) + (TOI(app->timeBuffer[4]) + (TOI(app->timeBuffer[3]) * 10));
+
+                if (app->minutes > 59 || app->timeBuffer[5] != '\0') {
+                    MessageBox(hDlg, TEXT("Invalid format"), TEXT("Warning"), MB_ICONEXCLAMATION | MB_OK);
+					SendMessage(hDlg, UM_RESET, (WPARAM)NULL, (LPARAM)NULL);
+                    break;
+                }
 
                 SetTimer(hDlg, IDT_TIMER, 60000, (TIMERPROC)NULL);
-                SetWindowText(hDlg, &timeBuffer);
+                SetWindowText(hDlg, app->timeBuffer);
 
                 /* taskbar progress init */
-                CoInitializeEx(NULL, COINITBASE_MULTITHREADED);
-                CoCreateInstance(&CLSID_TaskbarList, NULL, CLSCTX_INPROC_SERVER, &IID_ITaskbarList3, &pTaskBar);
+                if (FAILED(CoInitializeEx(NULL, COINITBASE_MULTITHREADED)))
+                    (void)0;
 
-                if (pTaskBar == NULL)
+                if (FAILED(CoCreateInstance(&CLSID_TaskbarList, NULL, CLSCTX_INPROC_SERVER, &IID_ITaskbarList3, &app->pTaskBar)))
+                    (void)0;
+
+                if (app->pTaskBar == NULL)
                 {
                     CoUninitialize();
                     ExitProcess(0);
                 }
 
-                ITaskbarList3_HrInit(pTaskBar);
-                ITaskbarList3_SetProgressState(pTaskBar, hDlg, TBPF_NORMAL);
+                ITaskbarList3_HrInit(app->pTaskBar);
+                ITaskbarList3_SetProgressState(app->pTaskBar, hDlg, TBPF_NORMAL);
 
                 ShowWindow(hDlg, SW_MINIMIZE);
                 SetWindowText(GetDlgItem(hDlg, IDOK), TEXT("Stop"));
 
-                bStarted = TRUE;
+                app->bStarted = TRUE;
             }
             else
             {
-                SendMessage(hDlg, UM_RESET, NULL, NULL);
+                SendMessage(hDlg, UM_RESET, (WPARAM)NULL, (LPARAM)NULL);
             }
 
             break;
 
         case IDM_ABOUTBOX:
-            DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hDlg, About);
+            DialogBox(app->hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hDlg, About);
             break;
         }
 
         break;
 
     case IDM_ABOUTBOX:
-        DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hDlg, About);
+        DialogBox(app->hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hDlg, About);
         break;
 
     case WM_TIMER:
     {
         if (wParam == IDT_TIMER)
         {
-            //--seconds;
-            //hours = seconds / 3600;
-            //minutes_left = (seconds / 60) % 60;
+            --app->minutes_left;
+            app->hours = app->minutes_left / 60;
 
-            --minutes_left;
-            hours = minutes_left / 60;
+            app->timeBuffer[0] = TOC(app->hours / 10);
+            app->timeBuffer[1] = TOC(app->hours % 10);
+            app->timeBuffer[3] = TOC(app->minutes_left % 60 / 10);
+            app->timeBuffer[4] = TOC(app->minutes_left % 60 % 10);
 
-            timeBuffer[0] = TOC(hours / 10);
-            timeBuffer[1] = TOC(hours % 10);
-            timeBuffer[3] = TOC(minutes_left % 60 / 10);
-            timeBuffer[4] = TOC(minutes_left % 60 % 10);
+            SetWindowText(app->hEditTime, app->timeBuffer);
+            SetWindowText(hDlg, app->timeBuffer);
+            ITaskbarList3_SetProgressValue(app->pTaskBar, hDlg, app->minutes - app->minutes_left, app->minutes);
 
-            SetWindowText(hEditTime, &timeBuffer);
-            SetWindowText(hDlg, &timeBuffer);
-            ITaskbarList3_SetProgressValue(pTaskBar, hDlg, minutes - minutes_left, minutes);
-
-            if (NULL_TIMER(timeBuffer))
+            if (NULL_TIMER(app->timeBuffer))
             {
                 MessageBeep(MB_OK);
-                SendMessage(hDlg, UM_RESET, NULL, NULL);
+                SendMessage(hDlg, UM_RESET, (WPARAM)NULL, (LPARAM)NULL);
             }
         }
 
@@ -174,13 +195,13 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
     case WM_SIZE:
         if (wParam == SIZE_RESTORED)
         {
-            if (bReset == TRUE)
+            if (app->bReset == TRUE)
             {
-                ITaskbarList3_SetProgressState(pTaskBar, hDlg, TBPF_NOPROGRESS);
-                ITaskbarList3_Release(pTaskBar);
+                ITaskbarList3_SetProgressState(app->pTaskBar, hDlg, TBPF_NOPROGRESS);
+                ITaskbarList3_Release(app->pTaskBar);
                 CoUninitialize();
                 SetWindowText(hDlg, TEXT("Tiktak"));
-                bReset = FALSE;
+                app->bReset = FALSE;
             }
         }
         break;
@@ -196,19 +217,13 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
         InsertMenu(hPopupMenu, 1, MF_SEPARATOR, 0, NULL);
         InsertMenu(hPopupMenu, 2, MF_BYPOSITION | MF_STRING, WM_DESTROY, TEXT("Exit"));
 
-        POINT point;
+        POINT point = { 0 };
         point.x = LOWORD(lParam);
         point.y = HIWORD(lParam);
         ClientToScreen(hDlg, &point);
 
-        //GetCursorPos(&point);
-
-
-
         SetForegroundWindow(hDlg);
         TrackPopupMenu(hPopupMenu, TPM_BOTTOMALIGN | TPM_LEFTALIGN, point.x, point.y, 0, hDlg, NULL);
-
-        //DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hDlg, About);
     }
         break;
 
@@ -218,7 +233,7 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
         break;
 
     case WM_DESTROY:
-        SendMessage(hDlg, UM_RESET, NULL, NULL);
+        SendMessage(hDlg, UM_RESET, (WPARAM)NULL, (LPARAM)NULL);
         PostQuitMessage(0);
         break;
 
@@ -226,16 +241,20 @@ INT_PTR CALLBACK DialogProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
     {
         SetWindowText(GetDlgItem(hDlg, IDOK), TEXT("Start"));
         KillTimer(hDlg, IDT_TIMER);
-        bStarted = FALSE;
+        app->bStarted = FALSE;
 
         if (IsIconic(hDlg))
         {
-            ITaskbarList3_SetProgressState(pTaskBar, hDlg, TBPF_ERROR);
-            bReset = TRUE;
+            ITaskbarList3_SetProgressState(app->pTaskBar, hDlg, TBPF_ERROR);
+            app->bReset = TRUE;
             break;
         }
 
-        ITaskbarList3_Release(pTaskBar);
+        if (app->pTaskBar != NULL) {
+			ITaskbarList3_Release(app->pTaskBar);
+            app->pTaskBar = NULL;
+        }
+
         CoUninitialize();
         SetWindowText(hDlg, TEXT("Tiktak"));
         break;
